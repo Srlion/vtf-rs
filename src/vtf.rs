@@ -1,4 +1,5 @@
 use crate::builder::VTFBuilder;
+use crate::flags::TextureFlags;
 use crate::header::VTFHeader;
 use crate::image::{ImageFormat, VTFImage};
 use crate::resources::{ResourceList, ResourceType};
@@ -16,12 +17,14 @@ pub struct VTF<'a> {
     pub highres_image: VTFImage<'a>,
 }
 
+/// Default flags used when none are explicitly provided
+const DEFAULT_FLAGS: u32 = 8972;
+
 /// Compute the full mip chain count for a given width and height.
 ///
 /// e.g. 256x256 -> 9 levels (256, 128, 64, 32, 16, 8, 4, 2, 1)
 fn compute_mipmap_count(width: u32, height: u32) -> u8 {
     let max_dim = width.max(height);
-    // floor(log2(max_dim)) + 1
     (32 - max_dim.leading_zeros()) as u8
 }
 
@@ -147,6 +150,7 @@ impl<'a> VTF<'a> {
         image_format: ImageFormat,
         first_frame: u16,
         mipmaps: bool,
+        flags: Option<TextureFlags>,
     ) -> Result<Vec<u8>, Error> {
         if frames.len() > u16::MAX as usize {
             return Err(Error::TooManyFrames);
@@ -162,8 +166,12 @@ impl<'a> VTF<'a> {
             1
         };
 
-        // 0x0100 = TEXTUREFLAGS_NOMIP, clear it when generating mipmaps
-        let flags: u32 = if mipmaps { 8972 & !0x0100 } else { 8972 };
+        let mut final_flags = flags.map_or(DEFAULT_FLAGS, |f| f.bits());
+        if mipmaps {
+            final_flags &= !TextureFlags::NO_MIP.bits();
+        } else {
+            final_flags |= TextureFlags::NO_MIP.bits();
+        }
 
         let header = VTFHeader {
             signature: VTFHeader::SIGNATURE,
@@ -171,7 +179,7 @@ impl<'a> VTF<'a> {
             header_size: 64,
             width: width as u16,
             height: height as u16,
-            flags,
+            flags: final_flags,
             frames: frames.len() as u16,
             first_frame,
             reflectivity: [0.0, 0.0, 0.0],
@@ -230,6 +238,6 @@ impl<'a> VTF<'a> {
             return Err(Error::InvalidImageSize);
         }
 
-        Self::encode(&[image], image_format, 0, false)
+        Self::encode(&[image], image_format, 0, false, None)
     }
 }

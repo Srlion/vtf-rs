@@ -1,10 +1,12 @@
+pub mod builder;
+pub mod flags;
 pub mod header;
 pub mod image;
 pub mod resources;
 mod utils;
 pub mod vtf;
-pub mod builder;
 
+pub use crate::flags::TextureFlags;
 pub use crate::image::ImageFormat;
 use crate::{builder::VTFBuilder, vtf::VTF};
 use ::image::DynamicImage;

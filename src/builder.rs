@@ -1,3 +1,4 @@
+use crate::flags::TextureFlags;
 use crate::{vtf::VTF, Error, ImageFormat};
 use image::{DynamicImage, GenericImageView};
 
@@ -7,6 +8,7 @@ pub struct VTFBuilder {
     image_format: ImageFormat,
     first_frame: u16,
     mipmaps: bool,
+    flags: Option<TextureFlags>,
 }
 
 impl VTFBuilder {
@@ -16,6 +18,7 @@ impl VTFBuilder {
             image_format,
             first_frame: 0,
             mipmaps: false,
+            flags: None,
         }
     }
 
@@ -49,6 +52,11 @@ impl VTFBuilder {
         self
     }
 
+    pub fn with_flags(mut self, flags: TextureFlags) -> Self {
+        self.flags = Some(flags);
+        self
+    }
+
     pub fn build(self) -> Result<Vec<u8>, Error> {
         if self.frames.is_empty() {
             return Err(Error::NoFrames);
@@ -63,6 +71,7 @@ impl VTFBuilder {
             self.image_format,
             self.first_frame,
             self.mipmaps,
+            self.flags,
         )
     }
 }
