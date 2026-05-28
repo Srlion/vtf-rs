@@ -151,6 +151,7 @@ impl<'a> VTF<'a> {
         first_frame: u16,
         mipmaps: bool,
         flags: Option<TextureFlags>,
+        bumpmap_scale: f32,
     ) -> Result<Vec<u8>, Error> {
         if frames.len() > u16::MAX as usize {
             return Err(Error::TooManyFrames);
@@ -183,7 +184,7 @@ impl<'a> VTF<'a> {
             frames: frames.len() as u16,
             first_frame,
             reflectivity: [0.0, 0.0, 0.0],
-            bumpmap_scale: 1.0,
+            bumpmap_scale,
             highres_image_format: image_format,
             mipmap_count,
             lowres_image_format: ImageFormat::Dxt1, // always the case
@@ -238,6 +239,6 @@ impl<'a> VTF<'a> {
             return Err(Error::InvalidImageSize);
         }
 
-        Self::encode(&[image], image_format, 0, false, None)
+        Self::encode(&[image], image_format, 0, false, None, 1.0)
     }
 }

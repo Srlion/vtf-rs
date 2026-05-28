@@ -9,6 +9,7 @@ pub struct VTFBuilder {
     first_frame: u16,
     mipmaps: bool,
     flags: Option<TextureFlags>,
+    bumpmap_scale: f32,
 }
 
 impl VTFBuilder {
@@ -19,6 +20,7 @@ impl VTFBuilder {
             first_frame: 0,
             mipmaps: false,
             flags: None,
+            bumpmap_scale: 1.0,
         }
     }
 
@@ -57,6 +59,11 @@ impl VTFBuilder {
         self
     }
 
+    pub fn set_bumpmap_scale(mut self, scale: f32) -> Self {
+        self.bumpmap_scale = scale;
+        self
+    }
+
     pub fn build(self) -> Result<Vec<u8>, Error> {
         if self.frames.is_empty() {
             return Err(Error::NoFrames);
@@ -72,6 +79,7 @@ impl VTFBuilder {
             self.first_frame,
             self.mipmaps,
             self.flags,
+            self.bumpmap_scale,
         )
     }
 }
