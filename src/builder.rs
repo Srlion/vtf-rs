@@ -1,4 +1,4 @@
-use crate::{Error, ImageFormat, vtf::VTF};
+use crate::{vtf::VTF, Error, ImageFormat};
 use image::{DynamicImage, GenericImageView};
 
 #[derive(Clone, Debug)]
@@ -6,16 +6,20 @@ pub struct VTFBuilder {
     frames: Vec<DynamicImage>,
     image_format: ImageFormat,
     first_frame: u16,
+    mipmaps: bool,
 }
+
 impl VTFBuilder {
     pub fn new(image_format: ImageFormat) -> Self {
-        VTFBuilder { frames: Vec::new(), image_format, first_frame: 0 }
+        VTFBuilder {
+            frames: Vec::new(),
+            image_format,
+            first_frame: 0,
+            mipmaps: false,
+        }
     }
 
-    pub fn add_frame(
-        mut self,
-        image: DynamicImage,
-    ) -> Result<Self, Error> {
+    pub fn add_frame(mut self, image: DynamicImage) -> Result<Self, Error> {
         if !image.width().is_power_of_two()
             || !image.height().is_power_of_two()
             || image.width() > u16::MAX as u32
@@ -40,6 +44,11 @@ impl VTFBuilder {
         self
     }
 
+    pub fn with_mipmaps(mut self, enabled: bool) -> Self {
+        self.mipmaps = enabled;
+        self
+    }
+
     pub fn build(self) -> Result<Vec<u8>, Error> {
         if self.frames.is_empty() {
             return Err(Error::NoFrames);
@@ -49,6 +58,11 @@ impl VTFBuilder {
             return Err(Error::InvalidFirstFrame);
         }
 
-        VTF::encode(&self.frames, self.image_format, self.first_frame)
+        VTF::encode(
+            &self.frames,
+            self.image_format,
+            self.first_frame,
+            self.mipmaps,
+        )
     }
 }

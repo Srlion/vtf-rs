@@ -3,6 +3,7 @@ use crate::header::VTFHeader;
 use crate::image::{ImageFormat, VTFImage};
 use crate::resources::{ResourceList, ResourceType};
 use crate::Error;
+use image::imageops::FilterType;
 use image::DynamicImage;
 use std::io::Cursor;
 use std::vec::Vec;
@@ -13,6 +14,75 @@ pub struct VTF<'a> {
     pub header: VTFHeader,
     pub lowres_image: VTFImage<'a>,
     pub highres_image: VTFImage<'a>,
+}
+
+/// Compute the full mip chain count for a given width and height.
+///
+/// e.g. 256x256 -> 9 levels (256, 128, 64, 32, 16, 8, 4, 2, 1)
+fn compute_mipmap_count(width: u32, height: u32) -> u8 {
+    let max_dim = width.max(height);
+    // floor(log2(max_dim)) + 1
+    (32 - max_dim.leading_zeros()) as u8
+}
+
+/// Generate a downscaled version of the image at the given mip level.
+///
+/// Level 0 = original size, level 1 = half, etc.
+fn generate_mip(image: &DynamicImage, level: u32) -> DynamicImage {
+    if level == 0 {
+        return image.clone();
+    }
+    let w = (image.width() >> level).max(1);
+    let h = (image.height() >> level).max(1);
+    image.resize_exact(w, h, FilterType::Lanczos3)
+}
+
+/// Encode a single image (at whatever mip dimensions) into the target format.
+///
+/// Returns the encoded bytes.
+fn encode_image_data(
+    image: &DynamicImage,
+    image_format: ImageFormat,
+    width: usize,
+    height: usize,
+) -> Result<Vec<u8>, Error> {
+    match image_format {
+        ImageFormat::Dxt5 => {
+            let image_data = image.to_rgba8();
+            let size = Format::Bc3.compressed_size(width, height);
+            let mut buf = vec![0u8; size];
+            Format::Bc3.compress(
+                image_data.as_raw(),
+                width,
+                height,
+                Params::default(),
+                &mut buf,
+            );
+            Ok(buf)
+        }
+        ImageFormat::Dxt1Onebitalpha => {
+            let image_data = image.to_rgba8();
+            let size = Format::Bc1.compressed_size(width, height);
+            let mut buf = vec![0u8; size];
+            Format::Bc1.compress(
+                image_data.as_raw(),
+                width,
+                height,
+                Params::default(),
+                &mut buf,
+            );
+            Ok(buf)
+        }
+        ImageFormat::Rgba8888 => {
+            let image_data = image.to_rgba8();
+            Ok(image_data.into_raw())
+        }
+        ImageFormat::Rgb888 => {
+            let image_data = image.to_rgb8();
+            Ok(image_data.into_raw())
+        }
+        _ => Err(Error::UnsupportedEncodeImageFormat(image_format)),
+    }
 }
 
 impl<'a> VTF<'a> {
@@ -72,26 +142,42 @@ impl<'a> VTF<'a> {
         })
     }
 
-    pub(crate) fn encode(frames: &[DynamicImage], image_format: ImageFormat, first_frame: u16) -> Result<Vec<u8>, Error> {
+    pub(crate) fn encode(
+        frames: &[DynamicImage],
+        image_format: ImageFormat,
+        first_frame: u16,
+        mipmaps: bool,
+    ) -> Result<Vec<u8>, Error> {
         if frames.len() > u16::MAX as usize {
             return Err(Error::TooManyFrames);
         }
 
         let image = &frames[0];
+        let width = image.width();
+        let height = image.height();
+
+        let mipmap_count = if mipmaps {
+            compute_mipmap_count(width, height)
+        } else {
+            1
+        };
+
+        // 0x0100 = TEXTUREFLAGS_NOMIP, clear it when generating mipmaps
+        let flags: u32 = if mipmaps { 8972 & !0x0100 } else { 8972 };
 
         let header = VTFHeader {
             signature: VTFHeader::SIGNATURE,
             version: [7, 1], // simpler version without resources for now
             header_size: 64,
-            width: image.width() as u16,
-            height: image.height() as u16,
-            flags: 8972,
+            width: width as u16,
+            height: height as u16,
+            flags,
             frames: frames.len() as u16,
             first_frame,
             reflectivity: [0.0, 0.0, 0.0],
             bumpmap_scale: 1.0,
             highres_image_format: image_format,
-            mipmap_count: 1,
+            mipmap_count,
             lowres_image_format: ImageFormat::Dxt1, // always the case
             lowres_image_width: 0,                  // no lowres for now
             lowres_image_height: 0,
@@ -99,76 +185,36 @@ impl<'a> VTF<'a> {
             resources: ResourceList::empty(),
         };
 
-        let mut data = Vec::with_capacity(
-            header.header_size as usize
-                + header
-                    .highres_image_format
-                    .frame_size(header.width as u32, header.height as u32)?
-                    as usize
-                + header.lowres_image_format.frame_size(
-                    header.lowres_image_width as u32,
-                    header.lowres_image_height as u32,
-                )? as usize,
-        );
+        // Calculate total image data size across all mip levels and frames
+        let mut total_image_size: usize = 0;
+        for mip in 0..mipmap_count as u32 {
+            let mw = (width >> mip).max(1) as u32;
+            let mh = (height >> mip).max(1) as u32;
+            let frame_size = image_format.frame_size(mw, mh)? as usize;
+            total_image_size += frame_size * frames.len();
+        }
+
+        let header_size = header.size();
+        let mut data = Vec::with_capacity(header_size + total_image_size);
 
         header.write(&mut data)?;
 
-        let header_size = header.size();
+        // Pad header to the declared size if needed
         assert!(data.len() <= header_size, "invalid header size");
+        data.resize(header_size, 0);
 
-        let width = header.width as usize;
-        let height = header.height as usize;
+        // VTF stores mipmaps smallest to largest.
+        // For each mip level (smallest first):
+        //   For each frame (first to last):
+        //     Write the image data
+        for mip in (0..mipmap_count as u32).rev() {
+            let mw = (width >> mip).max(1) as usize;
+            let mh = (height >> mip).max(1) as usize;
 
-        let frame_size = match image_format {
-            ImageFormat::Dxt5 => Format::Bc3.compressed_size(width, height),
-            ImageFormat::Dxt1Onebitalpha => Format::Bc1.compressed_size(width, height),
-            ImageFormat::Rgba8888 => width * height * 4,
-            ImageFormat::Rgb888 => width * height * 3,
-            _ => return Err(Error::UnsupportedEncodeImageFormat(image_format)),
-        };
-
-        data.resize(
-            header_size + frame_size * frames.len(),
-            0,
-        );
-
-        let mut output = &mut data[header_size..];
-
-        for image in frames {
-            match image_format {
-                ImageFormat::Dxt5 => {
-                    let image_data = image.to_rgba8();
-                    Format::Bc3.compress(
-                        image_data.as_raw(),
-                        width,
-                        height,
-                        Params::default(),
-                        output,
-                    );
-                    output = &mut output[frame_size..];
-                }
-                ImageFormat::Dxt1Onebitalpha => {
-                    let image_data = image.to_rgba8();
-                    Format::Bc1.compress(
-                        image_data.as_raw(),
-                        width,
-                        height,
-                        Params::default(),
-                        output,
-                    );
-                    output = &mut output[frame_size..];
-                }
-                ImageFormat::Rgba8888 => {
-                    let image_data = image.to_rgba8();
-                    output[..frame_size].copy_from_slice(&image_data);
-                    output = &mut output[frame_size..];
-                }
-                ImageFormat::Rgb888 => {
-                    let image_data = image.to_rgb8();
-                    output[..frame_size].copy_from_slice(&image_data);
-                    output = &mut output[frame_size..];
-                }
-                _ => return Err(Error::UnsupportedEncodeImageFormat(image_format)),
+            for frame_image in frames {
+                let mip_image = generate_mip(frame_image, mip);
+                let encoded = encode_image_data(&mip_image, image_format, mw, mh)?;
+                data.extend_from_slice(&encoded);
             }
         }
 
@@ -184,6 +230,6 @@ impl<'a> VTF<'a> {
             return Err(Error::InvalidImageSize);
         }
 
-        Self::encode(&[image], image_format, 0)
+        Self::encode(&[image], image_format, 0, false)
     }
 }
