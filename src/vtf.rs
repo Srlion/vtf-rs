@@ -231,12 +231,18 @@ impl<'a> VTF<'a> {
     }
 
     pub fn create(image: DynamicImage, image_format: ImageFormat) -> Result<Vec<u8>, Error> {
-        if !image.width().is_power_of_two()
-            || !image.height().is_power_of_two()
-            || image.width() > u16::MAX as u32
-            || image.height() > u16::MAX as u32
-        {
+        let w = image.width();
+        let h = image.height();
+
+        if w == 0 || h == 0 || w > u16::MAX as u32 || h > u16::MAX as u32 {
             return Err(Error::InvalidImageSize);
+        }
+
+        if image_format.is_block_compressed() {
+            // block-compressed formats need dimensions that are multiples of 4
+            if w % 4 != 0 || h % 4 != 0 {
+                return Err(Error::InvalidImageSize);
+            }
         }
 
         Self::encode(&[image], image_format, 0, false, None, 1.0)
