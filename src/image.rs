@@ -156,17 +156,6 @@ pub enum ImageFormat {
 }
 
 impl ImageFormat {
-    /// returns true for DXT/block-compressed formats that require multiple-of-4 dimensions
-    pub fn is_block_compressed(&self) -> bool {
-        matches!(
-            self,
-            ImageFormat::Dxt1
-                | ImageFormat::Dxt1Onebitalpha
-                | ImageFormat::Dxt3
-                | ImageFormat::Dxt5
-        )
-    }
-
     pub fn frame_size(&self, width: u32, height: u32) -> Result<u32, Error> {
         match self {
             ImageFormat::None => Ok(0),

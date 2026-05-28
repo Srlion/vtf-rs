@@ -25,14 +25,11 @@ impl VTFBuilder {
     }
 
     pub fn add_frame(mut self, image: DynamicImage) -> Result<Self, Error> {
-        let w = image.width();
-        let h = image.height();
-
-        if w == 0 || h == 0 || w > u16::MAX as u32 || h > u16::MAX as u32 {
-            return Err(Error::InvalidImageSize);
-        }
-
-        if self.image_format.is_block_compressed() && (w % 4 != 0 || h % 4 != 0) {
+        if !image.width().is_power_of_two()
+            || !image.height().is_power_of_two()
+            || image.width() > u16::MAX as u32
+            || image.height() > u16::MAX as u32
+        {
             return Err(Error::InvalidImageSize);
         }
 
