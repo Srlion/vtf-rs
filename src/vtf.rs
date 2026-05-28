@@ -58,7 +58,11 @@ fn encode_image_data(
                 image_data.as_raw(),
                 width,
                 height,
-                Params::default(),
+                Params {
+                    algorithm: texpresso::Algorithm::IterativeClusterFit,
+                    weights: texpresso::COLOUR_WEIGHTS_PERCEPTUAL,
+                    weigh_colour_by_alpha: true,
+                },
                 &mut buf,
             );
             Ok(buf)
